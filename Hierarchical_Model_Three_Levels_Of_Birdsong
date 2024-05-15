@@ -1,0 +1,192 @@
+
+clear all; close all; clc;
+
+% Initial Conditions
+x_0 = [0, -8, -8, -8, -8];
+
+
+%options = odeset('RelTol',1.0E-5,'AbsTol', 1.0E-5);
+
+% Ode calculation for the HVC level
+[t, x] = ode45(@(t, x) f(t, x), [0, 300], x_0);
+
+v = G(x);
+
+%Plot for first level
+plot(t, x(:,1:5));
+title('Third level hidden');
+xlabel('Time');
+ylabel('x1 to x5');
+legend('x2', 'x3', 'x4', 'x5');
+grid on;
+
+figure(2)
+plot(t, v);
+title('Third level causal states v');
+xlabel('Time');
+ylabel('v');
+grid on;
+
+
+% Ode and output calculation for second level (RA)
+x_0_new = [-1, 1, -1, 1, -1]';
+vfun = @(tt) interp1(t, v, tt);
+
+[t2, x2] = ode45(@(t, x) FRA(t, x, vfun(t)), [0, 300], x_0_new);
+
+
+v_2 = x2 / 2 + 1 / 2 + (randn(size(x2)) * 0.001);
+w_2 = G(x2)+(randn(size(x2)) * 0.001);
+
+
+%Plot for second (RA) level
+figure(4)
+plot(t2, w_2);
+title('w_2 - 2nd level hidden');
+xlabel('Time');
+ylabel('w_2');
+grid on;
+
+figure(5)
+plot(t2, v_2);
+title('v_2 - 2nd level causal');
+xlabel('Time');
+ylabel('v_2');
+grid on;
+
+%Calculations for third level, also mentioned as oscillator level
+x_I_0 =[0, -1, -1, -1, -1] ;
+% Initialize x_I_0 with zeros
+y_I_0 = [0, -1, -1, -1, -1] ;
+
+v_2_function = @(t) interp1(t2, v_2, t);
+
+% Solve ODEs for X_3 and Y_3
+[tx3, X_3_sol] = ode45(@(t, x) X_3_eq(t, x, v_2_function(t)), [0, 300], x_I_0);
+
+[ty3, Y_3_sol] = ode45(@(t, y) Y_3_eq(t, y, v_2_function(t)), [0, 300], y_I_0);
+
+
+% Calculate V_3 and w_3
+w_2_interptx3 = interp1(t2,w_2,tx3);
+w_2_interpty3 = interp1(t2,w_2,ty3);
+
+V_3 = sum(w_2_interptx3.* X_3_sol,2)+(randn(size(X_3_sol)) * 1e-6);
+w_3 = sum(w_2_interpty3.* Y_3_sol,2)+(randn(size(Y_3_sol)) * 1e-6);
+
+%Plot for the third level
+figure(11)
+plot(tx3, V_3);
+title('First level casual state v_3');
+xlabel('Time');
+ylabel('v_3');
+grid on;
+
+figure(12)
+plot(ty3, w_3);
+title('First level casual state w_3')
+xlabel('Time');
+ylabel('w_3');
+grid on;
+%end
+figure(9)
+plot(ty3, Y_3_sol);
+title('First level casual state v_3');
+xlabel('Time');
+ylabel('Y_3');
+grid on;
+
+%Saving the actual results of v3 and w3 from third level for the syrinx
+%generation, which is written in a different matlab file
+save 'V.mat' V_3
+save 'w.mat' w_3
+
+
+figure(10)
+plot(tx3, X_3_sol);
+title('First level casual state v_3');
+xlabel('Time');
+ylabel('X_3');
+grid on;
+
+
+
+%variables
+f_1 = 0.006;
+k_1 = (7*10^8)^(-2);
+n = length(x_0);
+theta = 3;
+
+
+% Function for third level equations
+function dx = X_3_eq(t, x, v_2)
+f_1 = 0.06;
+k_1 = (7*10^8)^(-2);
+kappa = 1.2;
+n=5;
+f = (1:n)' * f_1; % f_i = i * f_1
+
+dx = v_2 * sqrt(1 + (f * kappa).^2) .* (sin(f .* kappa .* t)) - x + (randn(size(x)) * 1e-6);
+
+end
+
+function dx = Y_3_eq(t, y, v_2)
+theta = 3;
+f_1 = 0.06;
+k_1 = (7*10^8)^(-2);
+kappa = 1.2;
+n=5;
+f = (1:n)' * f_1; % f_i = i * f_1
+dx = v_2 * sqrt(1 + (f * kappa).^2) .* (sin(f .* ((kappa * t) - theta))) - y + (randn(size(y)) * 1e-6);
+end
+
+
+
+
+%Function for calculating p for first level
+function [p] = generatep(n)
+p = ones(n, n);
+for i = 1:n
+    p(i, i) = 0;
+end
+for i = 1:n-1
+    p(i, i+1) = 1.5;
+    p(i+1, i) = 0.5;
+end
+p(n,1) = 1.5;
+p(1,n) = 0.5;
+end
+
+%Function for first level
+function [dx] = f(t, x)
+k_3 = 1 / 5;
+lambda = 1 / 8;
+p = generatep(length(x));
+S = @(x) 1 ./ (1 + exp(-x));
+dx = (k_3 * (-lambda * x - p * S(x) + 1) + 0.0001 * randn(size(x)));
+end
+
+%Function for G(x) at first level
+function [v] = G(x)
+v = exp(x) ./ sum(exp(x), 2) + 0.0001 * randn(size(x));
+end
+
+%Function for Second level
+function [dx] = FRA(t, x, v)
+k_2 = 1;
+x_star = eye(5, 5);
+A = [eye(5, 5)] * 0.2;
+fi = @(x) tanh(x);
+a = 0.2;
+c = a / tanh(1);
+W = [-0.7634, -0.6390, -0.2995, 0.9744, 0.5732;
+    0.5654, -0.0437, 0.4338, -0.8218, -0.5850;
+    0.5896, -0.0325, -0.6591, 0.7162, 0.9779;
+    -0.8933, 0.5817, -0.6501, -0.2264, -0.1209;
+    -0.9154, -0.2407, -0.4713, -0.4636, -0.5809];
+I = c * fi(x_star) - W * fi (x_star);
+dx = k_2 * (-A * x + W * fi(x) + I * v');
+end
+
+
+
